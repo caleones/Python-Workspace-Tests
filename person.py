@@ -1,6 +1,8 @@
 from random import choice, randint
 from dictionaries import wage_for_department_dict, sex_for_names_dict, department_list
 
+from multiprocessing import Manager, Lock, Pool, cpu_count
+
 class Person():
     def __init__(self: object, name: str, last_name: str, sex: str, genre: str):
         self.name = name
@@ -38,7 +40,7 @@ class Visitor(Person):
         # reason is the purpose of the visit
         self.reason = reason
 
-def createRandomPersons(total_std: int, total_prf: int, names: list, last_names: list) -> list:
+def createRandomPersonsPerChunk(total_std: int, total_prf: int, names: list, last_names: list, persons: list, students: list, professors: list):
     """
     Esta función se encarga de crear personas de manera aleatoria, de momento crea profesores y estudiantes pero puede crear cualquier tipo de persona.
 
@@ -54,9 +56,6 @@ def createRandomPersons(total_std: int, total_prf: int, names: list, last_names:
     # Estos contadores se encargan de llevar la cuenta de cuántos estudiantes y profesores se han creado con el propósito de no crear más de los que se solicitaron.
     count_std: int = 0
     count_prf: int = 0
-
-    # Estas listas se encargan de almacenar las personas creadas y de almacenar los estudiantes y profesores por separado para su manejo respectivo.
-    persons, students, professors = [], [], []
 
     '''
     A continación se hace un recorrido de la suma de estudiantes y profesores, y en general de cualquier tipo de persona para crearlas de forma aleatoria.
@@ -77,14 +76,20 @@ def createRandomPersons(total_std: int, total_prf: int, names: list, last_names:
         '''
         if (count_std < total_std):
             id = f"STD-{randint(100000, 999999)}"
-            if len(students):
-                while any(student.student_id == id for student in students):
-                    id = f"STD-{randint(100000, 999999)}"
+
+            with Lock():
+                if len(students):
+                    while any(student.student_id == id for student in students):
+                        id = f"STD-{randint(100000, 999999)}"
+
             department = choice(department_list)
             semester = randint(1, 10)
             student = Student(name=name, last_name=last_name, sex=sex, genre=genre, student_id=id, department=department, semester=semester)
-            persons.append(student)
-            students.append(student)
+
+            with Lock():                
+                persons.append(student)
+                students.append(student)                
+        
             print(f"Estudiante de nombre {student.name.title()} {student.last_name.title()} fue creado satisfactoriamente con el ID {student.student_id}. Su sexo es {student.sex}" + (f" pero se percibe como {student.genre}" if (student.genre != student.sex) else "") + f". Hace parte del departamento de {student.department} y se encuentra cursando el semestre {student.semester}.\n")
             count_std += 1
             continue
@@ -95,17 +100,57 @@ def createRandomPersons(total_std: int, total_prf: int, names: list, last_names:
         '''
         if (count_prf < total_prf):
             id = f"PRF-{randint(100000, 999999)}"
-            if len(professors):
-                while any(professor.professor_id == id for professor in professors):
-                    id = f"PRF-{randint(100000, 999999)}"
+
+            with Lock():
+                if len(professors):
+                    while any(professor.professor_id == id for professor in professors):
+                        id = f"PRF-{randint(100000, 999999)}"
+                        print("Ha habido un profesor igual xd")
+
             department = choice(department_list)
             if department in wage_for_department_dict:
                 wage = wage_for_department_dict[department]
             professor = Professor(name=name, last_name=last_name, sex=sex, genre=genre, professor_id=id, department=department, wage=wage)
-            professors.append(professor)
-            persons.append(professor)
+
+            with Lock():
+                professors.append(professor)
+                persons.append(professor)
+
             print(f"Profesor de nombre {professor.name.title()} {professor.last_name.title()} fue creado satisfactoriamente con el ID {professor.professor_id}. Su sexo es {professor.sex}" + (f" pero se percibe como {professor.genre}" if (professor.genre != professor.sex) else "") + f". Hace parte del departamento de {professor.department} y se encuentra ganando un salario mensual de ${professor.wage}.\n")
             count_prf += 1
-            continue
-        
+            continue        
+
+def createRandomPersons(total_std: int, total_prf: int, names: list, last_names: list) -> list:
+    processes = cpu_count()
+
+    total_std_per_process = total_std // processes
+    total_prf_per_process = total_prf // processes
+
+    residual_std = total_std % processes
+    residual_prf = total_prf % processes
+
+    with Manager() as manager:
+        persons = manager.list()
+        students = manager.list()
+        professors = manager.list()
+
+        with Pool(processes=processes) as pool:
+            pool.starmap(createRandomPersonsPerChunk, [
+                (
+                    total_std_per_process + (1 if i < residual_std else 0),
+                    total_prf_per_process + (1 if i < residual_prf else 0),
+                    names,
+                    last_names,
+                    persons,
+                    students,
+                    professors
+                ) for i in range(processes)
+            ])
+            pool.close()
+            pool.join()
+
+        persons = list(persons)
+        students = list(students)
+        professors = list(professors)
+
     return persons, students, professors
